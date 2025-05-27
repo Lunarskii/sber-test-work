@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "sber-test-work"
+version = "0.1.0"
+description = ""
+authors = ["Lunarskii <lunarskii0@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+requests = "^2.32.3"
+requests-html = "^0.10.0"
+lxml = {extras = ["html-clean"], version = "^5.4.0"}
+playwright = "^1.52.0"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
