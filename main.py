@@ -32,18 +32,21 @@ from logger import configure_logging
 
 def extract_urls_from_csv_file(file_name: str) -> list[URLMetadata]:
     urls: list[URLMetadata] = []
-    with open(file_name, "r") as file:
-        csv_reader = csv.reader(file, doublequote=False)
-        for row in csv_reader:
-            for column in row:
-                parsed_url = urlparse(column)
-                if parsed_url.scheme in ("http", "https", "ftp") and parsed_url.netloc:
-                    urls.append(URLMetadata(source_url=column))
+    try:
+        with open(file_name, "r") as file:
+            csv_reader = csv.reader(file, doublequote=False)
+            for row in csv_reader:
+                for column in row:
+                    parsed_url = urlparse(column)
+                    if parsed_url.scheme in ("http", "https", "ftp") and parsed_url.netloc:
+                        urls.append(URLMetadata(source_url=column))
+    except FileNotFoundError as e:
+        logging.warning(f"The file was not found when trying to read the URL list. File: {file_name}")
     return urls
 
 
 def clear_urls_of_garbage(urls: list[URLMetadata]) -> None:
-    ignored_query_params_re: str = r"(^utm_|clid$|^cache_)"
+    ignored_query_params_re: str = r"(^utm_|clid$|^cache_|_debug$)"
     pattern: re.Pattern = re.compile(ignored_query_params_re)
 
     for url in urls:

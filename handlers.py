@@ -75,12 +75,11 @@ class PDFHandler(ContentHandler):
             "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
         }
 
-        with open(dest_file_path, "w") as file:
-            for page in pdf_reader.pages:
-                file.write(page.extract_text() + "\n")
+        text: str = "\n".join(page.extract_text() for page in pdf_reader.pages)
+        self.metadata.update({"language": langdetect.detect(text)})
 
-        with open(dest_file_path, "r") as file:
-            self.metadata.update({"language": langdetect.detect(file.read())})
+        with open(dest_file_path, "w") as file:
+            file.write(text)
 
 
 class DocXHandler(ContentHandler):
@@ -99,12 +98,11 @@ class DocXHandler(ContentHandler):
             "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
         }
 
-        with open(dest_file_path, "w") as file:
-            for paragraph in document.paragraphs:
-                file.write(paragraph.text + "\n")
+        text: str = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.metadata.update({"language": langdetect.detect(text)})
 
-        with open(dest_file_path, "r") as file:
-            self.metadata.update({"language": langdetect.detect(file.read())})
+        with open(dest_file_path, "w") as file:
+            file.write(text)
 
 
 class XLSXHandler(ContentHandler):
@@ -122,13 +120,15 @@ class XLSXHandler(ContentHandler):
             "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
         }
 
-        with open(dest_file_path, "w") as file:
-            for sheet in workbook.worksheets:
-                for row in sheet.iter_rows(values_only=True):
-                    file.write(" ".join(str(cell) for cell in row if cell is not None) + "\n")
+        text: str = "\n".join(
+            " ".join(str(cell) for cell in row if cell is not None)
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows(values_only=True)
+        )
+        self.metadata.update({"language": langdetect.detect(text)})
 
-        with open(dest_file_path, "r") as file:
-            self.metadata.update({"language": langdetect.detect(file.read())})
+        with open(dest_file_path, "w") as file:
+            file.write(text)
 
 
 class PageHandler(ContentHandler):
