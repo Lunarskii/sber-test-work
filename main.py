@@ -1,14 +1,9 @@
 import csv
 import re
-import uuid
 import argparse
 import mimetypes
-from dataclasses import (
-    dataclass,
-    asdict,
-)
-from pathlib import Path
-from typing import Literal
+import logging
+from dataclasses import asdict
 
 from urllib.parse import (
     urlparse,
@@ -17,138 +12,150 @@ from urllib.parse import (
     urlencode,
 )
 import requests
-from playwright.sync_api import sync_playwright
+from requests.exceptions import RequestException
 
-from downloader import (
+from downloaders import (
     ContentDownloader,
     RequestsDocumentDownloader,
     RequestsPageDownloader,
 )
+from handlers import (
+    ContentHandler,
+    PDFHandler,
+    DocXHandler,
+    XLSXHandler,
+    PageHandler,
+)
+from schemas import URLMetadata
+from logger import configure_logging
 
 
-"""
-    id (уникальный порядковый номер или идентификатор записи)
-    source_url (URL из входного CSV-файла)
-    final_url (URL, с которого фактически был скачан контент, если были редиректы)
-    download_timestamp (дата и время скачивания/обработки в формате YYYY-MM-DD HH:MM:SS)
-    download_status (статус: success; failed_download; failed_processing; skipped_robots)
-    error_message (краткое описание ошибки, если была)
-    content_type_detected (определенный тип контента: document или page)
-    raw_file_path (относительный путь к сохраненному сырому файлу/странице)
-    processed_file_path (относительный путь к файлу с очищенным текстом)
-    file_size_bytes (размер сырого файла в байтах, если применимо)
-    document_page_count (количество страниц, если это документ и удалось определить)
-    detected_language (определенный язык документа/страницы)
-    extracted_keywords (извлеченные ключевые слова через запятую, если применимо)
-    extracted_entities (опционально: извлеченные именованные сущности, если реализовывали)
-    summary (опционально: краткое содержание документа, если реализовывали)
-    metadata_author (автор из метаданных документа, если доступно)
-    metadata_creation_date (дата создания из метаданных документа, если доступно)
-"""
-@dataclass
-class URLMetadata:
-    id: str
-    source_url: str
-    final_url: str
-    download_timestamp: str
-    download_status: Literal["success", "failed_download", "failed_processing", "skipped_robots"]
-    error_message: str
-    content_type_detected: Literal["document", "page"]
-    raw_file_path: str
-    processed_file_path: str
-    file_size_bytes: int
-    document_page_count: int
-    detected_language: str
-    extracted_keywords: list[str]
-    extracted_entities: list[str]
-    summary: str
-    metadata_author: str
-    metadata_creation_date: str
-
-
-def extract_urls_from_csv_file(file_name: str) -> list[str]:
-    urls: list[str] = []
+def extract_urls_from_csv_file(file_name: str) -> list[URLMetadata]:
+    urls: list[URLMetadata] = []
     with open(file_name, "r") as file:
         csv_reader = csv.reader(file, doublequote=False)
         for row in csv_reader:
             for column in row:
-                parsed_column = urlparse(column)
-                if parsed_column.netloc:
-                    urls.append(column)
+                parsed_url = urlparse(column)
+                if parsed_url.scheme in ("http", "https", "ftp") and parsed_url.netloc:
+                    urls.append(URLMetadata(source_url=column))
     return urls
 
 
-def clear_urls_of_garbage(
-    urls: list[str],
-    exclude_prefixes: set[str] | None = None,
-    exclude_postfixes: set[str] | None = None,
-    exclude_params: set[str] | None = None,
-) -> list[str]:
+def clear_urls_of_garbage(urls: list[URLMetadata]) -> None:
     ignored_query_params_re: str = r"(^utm_|clid$|^cache_)"
     pattern: re.Pattern = re.compile(ignored_query_params_re)
-    cleared_urls: list[str] = []
 
     for url in urls:
-        parsed_url = urlparse(url)
+        parsed_url = urlparse(url.source_url)
         query_params = [(key, value) for key, value in parse_qsl(parsed_url.query) if not pattern.search(key)]
         new_parsed_url = parsed_url._replace(query=urlencode(query_params, doseq=True))
-        cleared_urls.append(urlunparse(new_parsed_url))
-
-    return cleared_urls
+        url.source_url = str(urlunparse(new_parsed_url))
 
 
-def define_content_type(url: str) -> str:
-    # TODO добавить User-Agent, mb verify
-    request: requests.Response = requests.head(url, allow_redirects=True)
+def get_content_type(url: str) -> tuple[str, str]:
+    try:
+        response: requests.Response = requests.head(url, allow_redirects=True)
+    except RequestException:
+        ...
+    else:
+        content_type = response.headers.get("Content-Type")
 
-    if content_type := request.headers.get("Content-Type"):
-        _, sub_type = content_type.split(";")[0].split("/")
-        if sub_type in ("pdf", "msword", "rtf", "json", "xml") or sub_type.startswith("vnd."):
-            return "document"
-        return "html"
-
-
-def get_extension(content_type: str) -> str:
-    content_type = content_type.split(";")[0].strip().lower()
-
-    ext = mimetypes.guess_extension(content_type)
-    if ext:
-        return ext
-    return ""
-
-
-def download_files(urls: list[str]):
-    document_downloader: ContentDownloader = RequestsDocumentDownloader()
-    page_downloader: ContentDownloader = RequestsPageDownloader()
-    for url in urls:
-        request: requests.Response = requests.head(url, allow_redirects=True)
-        content_type = request.headers.get("Content-Type")
-        _, sub_type = content_type.split(";")[0].split("/")
-
-        file_name: str = str(uuid.uuid4()) + get_extension(content_type)
-        if define_content_type(url) == "document":
-            document_downloader.download(url, dest_folder="raw_downloads/documents/", file_name=file_name)
+        if not content_type:
+            content_type = mimetypes.guess_type(url)[0]
         else:
-            page_downloader.download(url, dest_folder="raw_downloads/pages/", file_name=file_name)
+            content_type = content_type.split(";")[0].strip().lower()
+        ext_type = mimetypes.guess_extension(content_type)
+
+        if ext_type:
+            return "page" if ext_type == ".html" else "document", ext_type
+    return "", ""
+
+
+def download_files(urls: list[URLMetadata]) -> None:
+    downloaders: dict[str, ContentDownloader] = {
+        "document": RequestsDocumentDownloader(dest_folder="raw_downloads/documents/"),
+        "page": RequestsPageDownloader(dest_folder="raw_downloads/pages/"),
+    }
+
+    for url in urls:
+        content_type, ext_type = get_content_type(url.source_url)
+
+        if content_type not in downloaders.keys():
+            url.download_status = "failed_download"
+        else:
+            file_name: str = url.id + ext_type
+            current_downloader: ContentDownloader = downloaders.get(content_type)
+
+            url.content_type_detected = content_type
+            current_downloader.download(url.source_url, file_name=file_name)
+            url.final_url = current_downloader.url
+            url.download_status = current_downloader.download_status
+            url.error_message = current_downloader.error_message
+            url.raw_file_path = current_downloader.file_path
+            url.file_size_bytes = current_downloader.file_size_bytes
+
+
+def handle_files(urls: list[URLMetadata]) -> None:
+    handlers: dict[str, ContentHandler] = {
+        "pdf": PDFHandler(dest_folder="processed_data/documents/"),
+        "docx": DocXHandler(dest_folder="processed_data/documents/"),
+        "xlsx": XLSXHandler(dest_folder="processed_data/documents/"),
+        "html": PageHandler(dest_folder="processed_data/pages/"),
+    }
+
+    for url in urls:
+        if url.download_status == "failed_download":
+            continue
+
+        ext_type: str = url.raw_file_path.split("/")[-1].split(".")[-1]
+
+        if ext_type not in handlers.keys():
+            url.download_status = "failed_processing"
+        else:
+            current_handler: ContentHandler = handlers.get(ext_type)
+
+            current_handler.handle(url.raw_file_path)
+            url.download_status = current_handler.download_status
+            url.error_message = current_handler.error_message
+            url.processed_file_path = current_handler.path
+            url.detected_language = current_handler.metadata.get("language")
+            if ext_type in ("pdf", "docx"):
+                url.document_page_count = current_handler.metadata.get("document_page_count")
+                url.metadata_author = current_handler.metadata.get("author")
+                url.metadata_creation_date = current_handler.metadata.get("creation_date")
+            elif ext_type == "xlsx":
+                url.metadata_author = current_handler.metadata.get("author")
+                url.metadata_creation_date = current_handler.metadata.get("creation_date")
+            else:
+                ...
+
+
+def generate_csv_report(urls: list[URLMetadata], file_path: str) -> None:
+    if len(urls) == 0:
+        return
+
+    with open(file_path, "w") as file:
+        writer = csv.DictWriter(file, fieldnames=asdict(urls[0]).keys())
+        writer.writeheader()
+        for url in urls:
+            writer.writerow(asdict(url))
 
 
 if __name__ == "__main__":
+    configure_logging(level=logging.DEBUG, log_file="app.log")
+    logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+    logging.getLogger("requests").setLevel(logging.CRITICAL)
+    logging.getLogger("pypdf").setLevel(logging.CRITICAL)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("csv_file")
     args: argparse.Namespace = parser.parse_args()
 
-    urls: list[str] = extract_urls_from_csv_file(args.csv_file)
-    urls = clear_urls_of_garbage(urls)
+    urls: list[URLMetadata] = extract_urls_from_csv_file(args.csv_file)
+    clear_urls_of_garbage(urls)
 
     download_files(urls)
+    handle_files(urls)
 
-
-# if __name__ == "__main__":
-    # page_test_dir: str = "raw_downloads/pages/"
-    # file_url: str = "https://docs.netams.com/"
-    #
-    # my_obj = MyObj(id=10, source_url="source", final_url="final")
-    # with open("123.csv", "w") as file:
-    #     writer = csv.DictWriter(file, fieldnames=asdict(my_obj).keys())
-    #     writer.writeheader()
-    #     writer.writerow(asdict(my_obj))
+    generate_csv_report(urls, "results_registry.csv")
