@@ -7,6 +7,13 @@ _robots_cache: dict[str, RobotFileParser] = {}
 
 
 def can_fetch(url: str, user_agent: str) -> bool:
+    """
+    Вспомогательная функция для определения доступа к определенному URL.
+    Проверяет наличие robots.txt на соответствующем домене и определяет доступность по его содержимому, если
+    robots.txt есть.
+    Если robots.txt отсутствует или при попытке обратиться к sitemap/robots.txt получает ошибку, то URL доступен.
+    Также парсеры кэшируются, и при повторной попытке обратиться к URL на том же домене берется предыдущий результат.
+    """
     parsed_url = urlparse(url)
     sitemap: str = f"{parsed_url.scheme}://{parsed_url.netloc}"
     robot_parser: RobotFileParser | None = _robots_cache.get(sitemap)
