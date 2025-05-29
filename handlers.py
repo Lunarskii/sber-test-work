@@ -17,6 +17,13 @@ import openpyxl
 
 
 class ContentHandler(ABC):
+    """
+    Базовый класс обработчика, который имеет основной метод handle и абстрактный _handle.
+    Основной метод обрабатывает общие исключения и возможные ситуации, и также вызывает метод _handle,
+    который обязательно должен быть реализован в наследниках, где способ обработки может быть любым.
+
+    Однако не учтен момент, что между наследниками и базовым классом нет соглашения о поле self.metadata.
+    """
     def __init__(self, dest_folder: str = "."):
         self.dest_folder: str = dest_folder
         self.download_status: Literal["success", "failed_processing"] = "success"
@@ -67,16 +74,15 @@ class PDFHandler(ContentHandler):
     ):
         pdf_reader = PdfReader(file_path)
         metadata: DocumentInformation = pdf_reader.metadata
+        text: str = "\n".join(page.extract_text() for page in pdf_reader.pages)
 
         creation_date = metadata.creation_date
         self.metadata = {
             "document_page_count": len(pdf_reader.pages),
             "author": metadata.author,
             "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
+            "language": langdetect.detect(text),
         }
-
-        text: str = "\n".join(page.extract_text() for page in pdf_reader.pages)
-        self.metadata.update({"language": langdetect.detect(text)})
 
         with open(dest_file_path, "w") as file:
             file.write(text)
@@ -90,16 +96,15 @@ class DocXHandler(ContentHandler):
     ):
         document = docx.Document(file_path)
         metadata = document.core_properties
+        text: str = "\n".join(paragraph.text for paragraph in document.paragraphs)
 
         creation_date = metadata.created
         self.metadata = {
             "document_page_count": len(document.paragraphs),
             "author": metadata.author,
             "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
+            "language": langdetect.detect(text),
         }
-
-        text: str = "\n".join(paragraph.text for paragraph in document.paragraphs)
-        self.metadata.update({"language": langdetect.detect(text)})
 
         with open(dest_file_path, "w") as file:
             file.write(text)
@@ -113,19 +118,18 @@ class XLSXHandler(ContentHandler):
     ):
         workbook = openpyxl.load_workbook(file_path, data_only=True)
         metadata = workbook.properties
-
-        creation_date = metadata.created
-        self.metadata = {
-            "author": metadata.creator,
-            "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
-        }
-
         text: str = "\n".join(
             " ".join(str(cell) for cell in row if cell is not None)
             for sheet in workbook.worksheets
             for row in sheet.iter_rows(values_only=True)
         )
-        self.metadata.update({"language": langdetect.detect(text)})
+
+        creation_date = metadata.created
+        self.metadata = {
+            "author": metadata.creator,
+            "creation_date": creation_date.strftime("%Y-%m-%d %H:%M:%S") if creation_date else None,
+            "language": langdetect.detect(text),
+        }
 
         with open(dest_file_path, "w") as file:
             file.write(text)

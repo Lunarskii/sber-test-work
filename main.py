@@ -10,6 +10,7 @@ from urllib.parse import (
     parse_qsl,
     urlunparse,
     urlencode,
+    ParseResult,
 )
 import requests
 from requests.exceptions import RequestException
@@ -30,22 +31,31 @@ from schemas import URLMetadata
 from logger import configure_logging
 
 
-def extract_urls_from_csv_file(file_name: str) -> list[URLMetadata]:
+def extract_urls_from_csv_file(file_name: str, sep: str = ",") -> list[URLMetadata]:
     urls: list[URLMetadata] = []
     try:
         with open(file_name, "r") as file:
-            csv_reader = csv.reader(file, doublequote=False)
-            for row in csv_reader:
-                for column in row:
-                    parsed_url = urlparse(column)
+            while row := file.readline():
+                """
+                Итерируемся по столбцам на случай, если в строке содержится не одна ссылка или ссылка содержится не в 
+                первом столбце. Можно прочитать все столбцы и найти все возможные ссылки.
+                
+                Обрезаем " в начале и в конце строки исключительно для случая, когда файл содержит строку такого вида.
+                """
+                for column in row.strip("\n\"").split(sep):
+                    parsed_url: ParseResult = urlparse(column)
                     if parsed_url.scheme in ("http", "https", "ftp") and parsed_url.netloc:
                         urls.append(URLMetadata(source_url=column))
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         logging.warning(f"The file was not found when trying to read the URL list. File: {file_name}")
     return urls
 
 
 def clear_urls_of_garbage(urls: list[URLMetadata]) -> None:
+    """
+    Используем регулярные выражения для поиска определенных шаблонов, чтобы не перечислять все возможные
+    query-параметры, тем более когда мы можем не знать о существовании некоторых, например "burgerkingclid".
+    """
     ignored_query_params_re: str = r"(^utm_|clid$|^cache_|_debug$)"
     pattern: re.Pattern = re.compile(ignored_query_params_re)
 
@@ -60,8 +70,12 @@ def get_content_type(url: str) -> tuple[str, str]:
     try:
         response: requests.Response = requests.head(url, allow_redirects=True)
     except RequestException:
-        ...
+        logging.warning(f"Attempt to get headers failed {url}")
     else:
+        """
+        Попытка получить тип контента из заголовка "Content-Type".
+        В случае отсутствия заголовка пытаемся узнать тип контента по URL.
+        """
         content_type = response.headers.get("Content-Type")
 
         if not content_type:
@@ -81,6 +95,10 @@ def download_files(urls: list[URLMetadata]) -> None:
         "page": RequestsPageDownloader(dest_folder="raw_downloads/pages/"),
     }
 
+    """
+    Скачиваем файлы и получаем нужные данные, которые может предоставить интерфейс. 
+    В том числе мы получаем данные об успешности/неуспешности попытки скачивания.
+    """
     for url in urls:
         content_type, ext_type = get_content_type(url.source_url)
 
@@ -107,6 +125,12 @@ def handle_files(urls: list[URLMetadata]) -> None:
         "html": PageHandler(dest_folder="processed_data/pages/"),
     }
 
+    """
+    Обрабатываем скачанные файлы и получаем нужные данные, которые может предоставить интерфейс. 
+    В том числе мы получаем данные об успешности/неуспешности попытки обработать файл.
+    Для каждого типа файла мы получаем отличные от других типов файлов данные, но есть общие, которые мы можем получить
+    со всех.
+    """
     for url in urls:
         if url.download_status == "failed_download":
             continue
@@ -130,11 +154,15 @@ def handle_files(urls: list[URLMetadata]) -> None:
             elif ext_type == "xlsx":
                 url.metadata_author = current_handler.metadata.get("author")
                 url.metadata_creation_date = current_handler.metadata.get("creation_date")
-            else:
-                ...
 
 
 def generate_csv_report(urls: list[URLMetadata], file_path: str) -> None:
+    """
+    Обработка случая на пустом списке нужна, так как для получения списка названий полей, который нужен для заголовка
+    .csv файла, нужен экземпляр класса, т.е. любой (нулевой) элемент списка.
+    Можно также получить эти поля через __annotations__ или __match_args__, но это не покрывает случай отсутствия
+    аннотаций.
+    """
     if len(urls) == 0:
         return
 
@@ -146,6 +174,9 @@ def generate_csv_report(urls: list[URLMetadata], file_path: str) -> None:
 
 
 if __name__ == "__main__":
+    """
+    Настройка логирования иных библиотек нужна исключительно для наглядности работы логирования приложения.
+    """
     configure_logging(level=logging.DEBUG, log_file="app.log")
     logging.getLogger("urllib3").setLevel(logging.CRITICAL)
     logging.getLogger("requests").setLevel(logging.CRITICAL)

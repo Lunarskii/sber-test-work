@@ -49,6 +49,10 @@ class URLMetadata:
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
+        """
+        Если скачивание успешно, и полю с необработанным файлом присваивается путь, устанавливается время загрузки
+        файла.
+        """
         if name == "raw_file_path" and value:
             time: str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             super().__setattr__("download_timestamp", time)
