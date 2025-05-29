@@ -31,6 +31,12 @@ from schemas import URLMetadata
 from logger import configure_logging
 
 
+DOCUMENT_RAW_FOLDER: str = "raw_downloads/documents/"
+PAGE_RAW_FOLDER: str = "raw_downloads/pages/"
+DOCUMENT_PROCESSED_FOLDER: str = "processed_data/documents/"
+PAGE_PROCESSED_FOLDER: str = "processed_data/pages/"
+
+
 def extract_urls_from_csv_file(file_name: str, sep: str = ",") -> list[URLMetadata]:
     urls: list[URLMetadata] = []
     try:
@@ -91,8 +97,8 @@ def get_content_type(url: str) -> tuple[str, str]:
 
 def download_files(urls: list[URLMetadata]) -> None:
     downloaders: dict[str, ContentDownloader] = {
-        "document": RequestsDocumentDownloader(dest_folder="raw_downloads/documents/"),
-        "page": RequestsPageDownloader(dest_folder="raw_downloads/pages/"),
+        "document": RequestsDocumentDownloader(dest_folder=DOCUMENT_RAW_FOLDER),
+        "page": RequestsPageDownloader(dest_folder=PAGE_RAW_FOLDER),
     }
 
     """
@@ -119,10 +125,10 @@ def download_files(urls: list[URLMetadata]) -> None:
 
 def handle_files(urls: list[URLMetadata]) -> None:
     handlers: dict[str, ContentHandler] = {
-        "pdf": PDFHandler(dest_folder="processed_data/documents/"),
-        "docx": DocXHandler(dest_folder="processed_data/documents/"),
-        "xlsx": XLSXHandler(dest_folder="processed_data/documents/"),
-        "html": PageHandler(dest_folder="processed_data/pages/"),
+        "pdf": PDFHandler(dest_folder=DOCUMENT_PROCESSED_FOLDER),
+        "docx": DocXHandler(dest_folder=DOCUMENT_PROCESSED_FOLDER),
+        "xlsx": XLSXHandler(dest_folder=DOCUMENT_PROCESSED_FOLDER),
+        "html": PageHandler(dest_folder=PAGE_PROCESSED_FOLDER),
     }
 
     """
